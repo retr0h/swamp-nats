@@ -1,7 +1,15 @@
+[![build](https://img.shields.io/github/actions/workflow/status/retr0h/swamp-nats/ci.yml?style=for-the-badge)](https://github.com/retr0h/swamp-nats/actions/workflows/ci.yml)
+[![license](https://img.shields.io/badge/license-MIT-brightgreen.svg?style=for-the-badge)](LICENSE)
+[![release](https://img.shields.io/github/release/retr0h/swamp-nats.svg?style=for-the-badge)](https://github.com/retr0h/swamp-nats/releases/latest)
+[![swamp extension](https://img.shields.io/badge/swamp.club-%40retr0h%2Fnats-ff69b4?style=for-the-badge)](https://swamp.club/extensions/@retr0h/nats)
+[![deno](https://img.shields.io/badge/deno-2.x-000000?style=for-the-badge&logo=deno&logoColor=white)](https://deno.com)
+[![conventional commits](https://img.shields.io/badge/Conventional%20Commits-1.0.0-yellow.svg?style=for-the-badge)](https://conventionalcommits.org)
+![commit activity](https://img.shields.io/github/commit-activity/m/retr0h/swamp-nats?style=for-the-badge)
+
 # @retr0h/nats
 
-[Swamp](https://github.com/systeminit/swamp) extension for general-purpose NATS
-transport operations — remote command execution, file upload, and agent
+🐊 [Swamp](https://github.com/systeminit/swamp) extension for general-purpose
+NATS transport operations — remote command execution, file upload, and agent
 reachability checks over a NATS (optionally JetStream) message bus.
 
 Pairs with [swamp-nats-agent](https://github.com/retr0h/swamp-nats-agent), a
@@ -15,7 +23,7 @@ subjects. Same shape, different wire — trade agentless-SSH-simplicity for
 persistent-subscribed-fleet with JetStream durability, label routing, and
 namespace isolation.
 
-## Models
+## 📦 Models
 
 ### `nats/host`
 
@@ -28,18 +36,18 @@ NATS request-reply.
 | `upload`            | Write file content to a path on the remote host         |
 | `waitForConnection` | Wait until the agent is reachable (request/reply probe) |
 
-## Workflows
+## 🔧 Workflows
 
 None — this is a foundational model used by other extensions (for example, a
 NATS-backed fork of cfgmgmt can patch its `_lib/ssh.ts` to import from here
 instead of shelling out to `ssh`/`scp`).
 
-## Dependencies
+## 🔗 Dependencies
 
 None (at the swamp extension layer). At the operator layer you need a reachable
 NATS server; at the host layer you need `swamp-nats-agent` subscribed.
 
-## Used by
+## 👥 Used by
 
 - [swamp-nats-agent](https://github.com/retr0h/swamp-nats-agent) — the
   companion daemon that runs on every managed host and answers the three
@@ -48,7 +56,7 @@ NATS server; at the host layer you need `swamp-nats-agent` subscribed.
   this extension when `globalArgs.transport: nats` is set, giving all 35
   cfgmgmt models NATS transport for free.
 
-## Install
+## 📥 Install
 
 ```bash
 swamp extension pull @retr0h/nats
@@ -60,7 +68,7 @@ Or for local development:
 swamp extension source add ~/git/swamp.club/swamp-nats
 ```
 
-## NATS server assumptions
+## 🧰 NATS server assumptions
 
 Unlike SSH (which "just works" wherever `sshd` is running), NATS transport
 expects the following about your deployment:
@@ -100,7 +108,7 @@ etc.) lives on the **agent** side, not in this extension. See the
 agent CLI flags and env vars. This extension only publishes requests and
 awaits replies; it does not subscribe or manage consumers.
 
-## Authentication
+## 🔐 Authentication
 
 Every NATS auth mechanism is exposed as globalArgs fields, mirroring how SSH
 models expose `nodeUser`/`nodeIdentityFile`. Pass whichever fields match your
@@ -123,6 +131,8 @@ natsCredsPath: ${{ vault.nats_ops.creds_path }}
 natsNKeySeed: ${{ vault.nats_ops.nkey_seed }}
 ```
 
-## License
+## 📄 License
 
-MIT
+The [MIT][] License.
+
+[MIT]: LICENSE
