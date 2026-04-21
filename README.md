@@ -23,7 +23,7 @@ subjects. Same shape, different wire — trade agentless-SSH-simplicity for
 persistent-subscribed-fleet with JetStream durability, label routing, and
 namespace isolation.
 
-## Models
+## 📦 Models
 
 ### `nats/host`
 
@@ -36,18 +36,18 @@ NATS request-reply.
 | `upload`            | Write file content to a path on the remote host         |
 | `waitForConnection` | Wait until the agent is reachable (request/reply probe) |
 
-## Workflows
+## 🔧 Workflows
 
 None — this is a foundational model used by other extensions (for example, a
 NATS-backed fork of cfgmgmt can patch its `_lib/ssh.ts` to import from here
 instead of shelling out to `ssh`/`scp`).
 
-## Dependencies
+## 🔗 Dependencies
 
 None (at the swamp extension layer). At the operator layer you need a reachable
 NATS server; at the host layer you need `swamp-nats-agent` subscribed.
 
-## Used by
+## 👥 Used by
 
 - [swamp-nats-agent](https://github.com/retr0h/swamp-nats-agent) — the
   companion daemon that runs on every managed host and answers the three
@@ -56,7 +56,7 @@ NATS server; at the host layer you need `swamp-nats-agent` subscribed.
   this extension when `globalArgs.transport: nats` is set, giving all 35
   cfgmgmt models NATS transport for free.
 
-## Install
+## 📥 Install
 
 ```bash
 swamp extension pull @retr0h/nats
@@ -68,7 +68,7 @@ Or for local development:
 swamp extension source add ~/git/swamp.club/swamp-nats
 ```
 
-## NATS server assumptions
+## 🧰 NATS server assumptions
 
 Unlike SSH (which "just works" wherever `sshd` is running), NATS transport
 expects the following about your deployment:
@@ -108,7 +108,7 @@ etc.) lives on the **agent** side, not in this extension. See the
 agent CLI flags and env vars. This extension only publishes requests and
 awaits replies; it does not subscribe or manage consumers.
 
-## Authentication
+## 🔐 Authentication
 
 Every NATS auth mechanism is exposed as globalArgs fields, mirroring how SSH
 models expose `nodeUser`/`nodeIdentityFile`. Pass whichever fields match your
@@ -131,6 +131,8 @@ natsCredsPath: ${{ vault.nats_ops.creds_path }}
 natsNKeySeed: ${{ vault.nats_ops.nkey_seed }}
 ```
 
-## License
+## 📄 License
 
-MIT
+The [MIT][] License.
+
+[MIT]: LICENSE
