@@ -181,20 +181,24 @@ jobs:
 ## NATS server assumptions
 
 - A reachable NATS server at `natsUrl`
-- Operator credentials authorized to `pub` on `{natsSubjectPrefix}.>`
+- **JetStream enabled** — every request is captured in the `SWAMP_AGENT`
+  stream and every file transfer rides the `swamp-agent-files` Object Store
+  bucket. Both auto-created by the agent on first startup.
+- Operator credentials authorized to `pub` on `{natsSubjectPrefix}.>` and
+  read/write access to the `swamp-agent-files` Object Store bucket
 - `swamp-nats-agent` subscribed on the target host
-- JetStream is NOT required for Phase 1 (Phase 2 uses it for durability)
 
 See the extension's [README](../../../README.md) for the full server-side
 configuration guide.
 
 ## Gotchas
 
-- **Agent must be deployed.** Unlike `@keeb/ssh`, this is not agentless — every
-  target host runs `swamp-nats-agent`. Plan for fleet bootstrapping.
-- **Message size ceiling.** NATS core messages are capped at ~1 MiB by default.
-  Small configs and templates fit fine; large archives and binary blobs need
-  Phase 2's JetStream Object Store variant (not yet implemented).
+- **Agent must be deployed.** Unlike `@keeb/ssh`, this is not agentless —
+  every target host runs `swamp-nats-agent`. Plan for fleet bootstrapping.
+- **File transfers always ride Object Store.** Even small files. Tiny extra
+  latency (a put + get round-trip) vs SSH's single `scp` hop, bought for
+  protocol simplicity and no 1 MiB ceiling. Large archives and binary
+  blobs work without any special handling.
 - **`exec` does NOT throw on non-zero exit.** Inspect `exitCode` — behavior
   differs from `@keeb/ssh/exec` which throws. Matches the semantics cfgmgmt
   and similar check/apply frameworks expect.
