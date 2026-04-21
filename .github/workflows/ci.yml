@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  validate:
+    name: swamp extension validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: Install swamp CLI
+        run: curl -fsSL https://swamp.club/install.sh | sh
+
+      - name: Add swamp to PATH
+        run: echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+      # Format + lint the extension's TypeScript. `swamp extension fmt`
+      # writes changes in-place; the git diff check below catches any
+      # drift from upstream formatting.
+      - name: swamp extension fmt
+        run: swamp extension fmt manifest.yaml
+
+      - name: Fail on formatting drift
+        run: git diff --exit-code
+
+      # Bundles the extension and validates the whole manifest (models,
+      # skills, labels, TypeScript bundle, manifest schema) without
+      # touching the registry.
+      - name: swamp extension push --dry-run
+        run: swamp extension push manifest.yaml --dry-run

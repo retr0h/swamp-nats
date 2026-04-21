@@ -1,7 +1,15 @@
+[![build](https://img.shields.io/github/actions/workflow/status/retr0h/swamp-nats/ci.yml?style=for-the-badge)](https://github.com/retr0h/swamp-nats/actions/workflows/ci.yml)
+[![license](https://img.shields.io/badge/license-MIT-brightgreen.svg?style=for-the-badge)](LICENSE)
+[![release](https://img.shields.io/github/release/retr0h/swamp-nats.svg?style=for-the-badge)](https://github.com/retr0h/swamp-nats/releases/latest)
+[![swamp extension](https://img.shields.io/badge/swamp.club-%40retr0h%2Fnats-ff69b4?style=for-the-badge)](https://swamp.club/extensions/@retr0h/nats)
+[![deno](https://img.shields.io/badge/deno-2.x-000000?style=for-the-badge&logo=deno&logoColor=white)](https://deno.com)
+[![conventional commits](https://img.shields.io/badge/Conventional%20Commits-1.0.0-yellow.svg?style=for-the-badge)](https://conventionalcommits.org)
+![commit activity](https://img.shields.io/github/commit-activity/m/retr0h/swamp-nats?style=for-the-badge)
+
 # @retr0h/nats
 
-[Swamp](https://github.com/systeminit/swamp) extension for general-purpose NATS
-transport operations — remote command execution, file upload, and agent
+🐊 [Swamp](https://github.com/systeminit/swamp) extension for general-purpose
+NATS transport operations — remote command execution, file upload, and agent
 reachability checks over a NATS (optionally JetStream) message bus.
 
 Pairs with [swamp-nats-agent](https://github.com/retr0h/swamp-nats-agent), a
