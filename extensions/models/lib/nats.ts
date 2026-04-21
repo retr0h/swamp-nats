@@ -1,14 +1,15 @@
 // @retr0h/nats — NATS (JetStream) transport primitives
 //
-// Full-featured NATS client wrapping the three wire primitives exposed by
-// swamp-nats-agent (exec, writeFile, readFile). Every file transfer rides
-// JetStream Object Store; every request is captured in a JetStream stream
-// for durability; replies travel over core NATS inbox.
+// API shape deliberately mirrors adam/cfgmgmt's internal SSH library so the
+// 35 cfgmgmt models can swap transports by changing a single import line.
+// Function names and argument shapes match adam's lib exactly. SSH-specific
+// fields on ConnectOpts (port, username, privateKeyPath, strictHostKeyChecking)
+// are accepted and ignored so adam's existing connect(g) helpers compile
+// unchanged. NATS-specific fields (natsUrl, auth, subject prefix) are
+// additional optional fields the dispatcher or operator supplies.
 //
-// Consumers:
-//   1. Direct use from workflows via the @retr0h/nats/host model.
-//   2. Other extensions (e.g. a NATS-backed fork of @adam/cfgmgmt's
-//      _lib/ssh.ts shim) that need transport primitives internally.
+// Extras beyond adam's SSH lib: readFile, waitForAgent — available for
+// extensions that want the capability; cfgmgmt models don't use them today.
 
 import { z } from "npm:zod@4";
 import {
@@ -30,30 +31,36 @@ import {
   WriteFileResponseSchema,
 } from "./protocol.ts";
 
-// ── Public types ─────────────────────────────────────────────────────────
+// ── Public types (mirror adam's _lib/ssh.ts shapes) ──────────────────────
 
+/** Connection options. SSH-legacy fields are accepted but ignored; NATS
+ *  fields are extra optional additions. */
 export interface ConnectOpts {
-  /** Target hostname — maps to the NATS subject suffix. */
-  nodeHost: string;
-  /** NATS server URL (comma-separated list also accepted). */
-  natsUrl: string;
-  /** Subject prefix; default "swamp.agent". */
+  // SSH-era fields — adam's cfgmgmt models pass these. `host` is the only
+  // one actually used by the NATS transport (maps to the subject suffix);
+  // the rest are accepted for drop-in compatibility and silently ignored.
+  host: string;
+  port?: number;
+  username?: string;
+  privateKeyPath?: string;
+  strictHostKeyChecking?: string;
+
+  // NATS-specific fields. The dispatcher in a patched `_lib/ssh.ts` (or
+  // the operator calling this lib directly) supplies these.
+  natsUrl?: string;
   natsSubjectPrefix?: string;
-  /** Per-request timeout in ms; default 60000. */
   timeoutMs?: number;
-  /** Auth — supply whichever fields match your NATS cluster. */
   natsUser?: string;
   natsPass?: string;
   natsToken?: string;
-  /** Path to a NATS creds file (user JWT + nkey). Read at connect time. */
   natsCredsPath?: string;
-  /** nkey seed as a string (alternative to creds file). */
   natsNKeySeed?: string;
   natsTlsCaFile?: string;
   natsTlsCertFile?: string;
   natsTlsKeyFile?: string;
 }
 
+/** Opaque connection handle — callers pass it around but don't inspect it. */
 export interface NatsConn {
   target: string;
   prefix: string;
@@ -61,6 +68,7 @@ export interface NatsConn {
   nc: NatsConnection;
 }
 
+/** Matches adam's `ExecResult`. */
 export interface ExecResult {
   stdout: string;
   stderr: string;
@@ -68,18 +76,19 @@ export interface ExecResult {
   error?: string;
 }
 
+/** Matches adam's `BecomeOpts`. */
 export interface BecomeOpts {
   become?: boolean;
   becomeUser?: string;
   becomePassword?: string;
 }
 
+/** Extra args for writeFileAs (mirrors adam's). */
 export interface WriteFileOpts extends BecomeOpts {
   mode?: string;
   owner?: string;
   group?: string;
-  /** Encoding of the supplied `content` string; always decoded into bytes
-   *  before uploading to Object Store. */
+  /** Encoding of the supplied `content`. Default "utf8". */
   contentEncoding?: "utf8" | "base64";
 }
 
@@ -97,17 +106,23 @@ function pool(): Map<string, Promise<NatsConnection>> {
   >;
 }
 
-// ── Public API ───────────────────────────────────────────────────────────
+// ── Public API (matches adam's _lib/ssh.ts names) ────────────────────────
 
 export async function getConnection(opts: ConnectOpts): Promise<NatsConn> {
-  validateHostnameTarget(opts.nodeHost);
+  validateHostnameTarget(opts.host);
+  const natsUrl = opts.natsUrl ?? Deno.env.get("SWAMP_NATS_URL");
+  if (!natsUrl) {
+    throw new Error(
+      `@retr0h/nats: natsUrl not provided and SWAMP_NATS_URL env var not set`,
+    );
+  }
   const p = pool();
-  const key = poolKey(opts);
+  const key = poolKey(natsUrl, opts);
   let conn = p.get(key);
   if (!conn) {
     conn = connect({
-      servers: opts.natsUrl.split(",").map((s) => s.trim()),
-      name: `swamp-nats:${opts.nodeHost}`,
+      servers: natsUrl.split(",").map((s) => s.trim()),
+      name: `swamp-nats:${opts.host}`,
       reconnect: true,
       maxReconnectAttempts: 5,
       ...(await authOptions(opts)),
@@ -115,14 +130,15 @@ export async function getConnection(opts: ConnectOpts): Promise<NatsConn> {
     p.set(key, conn);
   }
   return {
-    target: opts.nodeHost,
+    target: opts.host,
     prefix: opts.natsSubjectPrefix ?? "swamp.agent",
     timeoutMs: opts.timeoutMs ?? 60_000,
     nc: await conn,
   };
 }
 
-export async function natsExec(
+/** Run a shell command. Mirrors adam's `exec()`. */
+export async function exec(
   conn: NatsConn,
   command: string,
   opts?: { stdinData?: string; timeoutSec?: number },
@@ -135,25 +151,35 @@ export async function natsExec(
   return await request(conn, "exec", req, ExecResponseSchema);
 }
 
-export async function natsExecSudo(
+/** Run a shell command, optionally with sudo. Mirrors adam's `execSudo()`. */
+export async function execSudo(
   conn: NatsConn,
   command: string,
   opts?: BecomeOpts & { stdinData?: string; timeoutSec?: number },
 ): Promise<ExecResult> {
+  if (!opts?.become) return await exec(conn, command, opts);
   const req: ExecRequest = {
     cmd: command,
-    sudo: !!opts?.become,
-    becomeUser: opts?.becomeUser,
-    becomePassword: opts?.becomePassword,
-    stdin: opts?.stdinData,
-    timeoutSec: opts?.timeoutSec,
+    sudo: true,
+    becomeUser: opts.becomeUser,
+    becomePassword: opts.becomePassword,
+    stdin: opts.stdinData,
+    timeoutSec: opts.timeoutSec,
   };
   return await request(conn, "exec", req, ExecResponseSchema);
 }
 
-/** Write file content via the agent's writeFile primitive. Content is
- *  uploaded to Object Store and the agent fetches it from there. */
-export async function natsWriteFile(
+/** Write file content (no sudo). Mirrors adam's `writeFile()`. */
+export async function writeFile(
+  conn: NatsConn,
+  remotePath: string,
+  content: string,
+): Promise<void> {
+  await writeFileAs(conn, remotePath, content);
+}
+
+/** Write file content, optionally with sudo. Mirrors adam's `writeFileAs()`. */
+export async function writeFileAs(
   conn: NatsConn,
   remotePath: string,
   content: string,
@@ -175,22 +201,51 @@ export async function natsWriteFile(
   const resp = await request(conn, "writeFile", req, WriteFileResponseSchema);
   if (!resp.ok) {
     throw new Error(
-      `writeFile ${remotePath} failed: ${resp.error ?? "unknown error"}`,
+      `writeFileAs ${remotePath} failed: ${resp.error ?? "unknown error"}`,
     );
   }
 }
 
-/** Read file content via the agent's readFile primitive. The agent uploads
- *  bytes to Object Store and returns an ObjectRef; this function fetches
- *  and decodes. */
-export async function natsReadFile(
+/** Copy a local file to the remote host (no sudo). Mirrors adam's `scpFile()`.
+ *  Operator reads the local file, uploads bytes to JetStream Object Store,
+ *  agent fetches and writes. No new agent primitive — same writeFile wire. */
+export async function scpFile(
+  conn: NatsConn,
+  localPath: string,
+  remotePath: string,
+): Promise<void> {
+  await scpFileAs(conn, localPath, remotePath);
+}
+
+/** Copy a local file to the remote host, optionally with sudo. Mirrors
+ *  adam's `scpFileAs()`. */
+export async function scpFileAs(
+  conn: NatsConn,
+  localPath: string,
+  remotePath: string,
+  opts?: BecomeOpts & { mode?: string; owner?: string; group?: string },
+): Promise<void> {
+  const bytes = await Deno.readFile(localPath);
+  let binary = "";
+  for (let i = 0; i < bytes.length; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  const b64 = btoa(binary);
+  await writeFileAs(conn, remotePath, b64, {
+    ...opts,
+    contentEncoding: "base64",
+  });
+}
+
+/** Read file content. Bonus primitive not in adam's SSH lib. */
+export async function readFile(
   conn: NatsConn,
   remotePath: string,
-  opts?: { sudo?: boolean; encoding?: "utf8" | "base64" },
+  opts?: BecomeOpts & { encoding?: "utf8" | "base64" },
 ): Promise<{ content: string; encoding: "utf8" | "base64" }> {
   const req: ReadFileRequest = {
     path: remotePath,
-    sudo: opts?.sudo,
+    sudo: !!opts?.become,
   };
   const resp = await request(conn, "readFile", req, ReadFileResponseSchema);
   if (resp.error) {
@@ -205,6 +260,7 @@ export async function natsReadFile(
   return encodeBytes(bytes, opts?.encoding ?? "utf8");
 }
 
+/** Poll the agent via a trivial `exec "true"` until reachable. Bonus. */
 export async function waitForAgent(
   conn: NatsConn,
   timeoutSec: number,
@@ -213,7 +269,7 @@ export async function waitForAgent(
   const probeConn: NatsConn = { ...conn, timeoutMs: 3_000 };
   while (Date.now() < deadline) {
     try {
-      const res = await natsExec(probeConn, "true", { timeoutSec: 3 });
+      const res = await exec(probeConn, "true", { timeoutSec: 3 });
       if (res.exitCode === 0) return true;
     } catch {
       // request timed out — agent not yet reachable
@@ -225,10 +281,12 @@ export async function waitForAgent(
   );
 }
 
+/** Shell escape helper. Matches adam's `shellEscape()`. */
 export function shellEscape(s: string): string {
   return "'" + s.replace(/'/g, "'\\''") + "'";
 }
 
+/** Close every pooled NatsConnection. Matches adam's `closeAll()`. */
 export async function closeAll(): Promise<void> {
   const p = pool();
   for (const conn of p.values()) {
@@ -255,10 +313,10 @@ function validateHostnameTarget(target: string): void {
   }
 }
 
-function poolKey(opts: ConnectOpts): string {
+function poolKey(natsUrl: string, opts: ConnectOpts): string {
   const authKey = opts.natsCredsPath ?? opts.natsToken ?? opts.natsUser ??
     (opts.natsTlsCertFile ?? "anon");
-  return `${opts.natsUrl}::${authKey}`;
+  return `${natsUrl}::${authKey}`;
 }
 
 async function authOptions(

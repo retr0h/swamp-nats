@@ -1,37 +1,63 @@
 import { z } from "npm:zod@4";
 import {
   closeAll,
+  exec,
+  execSudo,
   getConnection,
-  natsExec,
-  natsExecSudo,
-  natsWriteFile,
   waitForAgent,
+  writeFileAs,
 } from "./lib/nats.ts";
 
-// Global arguments — NATS connection + auth, shared by every method
+// Global arguments — mirrors @adam/cfgmgmt's GlobalArgsSchema shape
+// (nodeHost / nodeUser / nodePort / nodeIdentityFile / become / becomeUser /
+// becomePassword) so a cfgmgmt-style workflow author can move between SSH
+// and NATS transports without relearning the field names. NATS-specific
+// connection and auth fields are added alongside.
 const NatsConnectionArgs = z.object({
+  // Target + SSH-era fields (SSH ones accepted and ignored for NATS, but
+  // kept so the namespace stays aligned with @adam/cfgmgmt).
   nodeHost: z.string().describe(
     "Target hostname (maps to NATS subject suffix)",
   ),
+  nodeUser: z.string().default("root").describe(
+    "Agent-side user (SSH-era field, advisory)",
+  ),
+  nodePort: z.number().default(22).describe(
+    "SSH port (ignored by NATS transport)",
+  ),
+  nodeIdentityFile: z.string().optional().describe(
+    "SSH private key path (ignored by NATS transport)",
+  ),
+
+  // Sudo / become — transport-agnostic, same field names as @adam/cfgmgmt
+  become: z.boolean().default(false).describe(
+    "Run commands with sudo on the agent",
+  ),
+  becomeUser: z.string().default("root").describe(
+    "User to become when sudo is true",
+  ),
+  becomePassword: z.string().optional().meta({ sensitive: true }).describe(
+    "Password for sudo -S (piped via stdin)",
+  ),
+
+  // NATS-specific connection + auth fields
   natsUrl: z.string().describe("NATS server URL (nats://host:port)"),
   natsSubjectPrefix: z.string().default("swamp.agent").describe(
     "Subject prefix for multi-tenant namespace isolation",
   ),
   timeoutMs: z.number().default(60000).describe("Per-request timeout (ms)"),
-
-  // Auth — supply whichever fields match your NATS cluster
-  natsUser: z.string().optional().describe("User/pass auth — username"),
+  natsUser: z.string().optional().describe("NATS user/pass auth — username"),
   natsPass: z.string().optional().meta({ sensitive: true }).describe(
-    "User/pass auth — password",
+    "NATS user/pass auth — password",
   ),
   natsToken: z.string().optional().meta({ sensitive: true }).describe(
-    "Static token auth",
+    "NATS static token auth",
   ),
   natsCredsPath: z.string().optional().describe(
     "Path to NATS creds file (user JWT + nkey, recommended)",
   ),
   natsNKeySeed: z.string().optional().meta({ sensitive: true }).describe(
-    "nkey seed directly (alternative to creds file)",
+    "NATS nkey seed (alternative to creds file)",
   ),
   natsTlsCaFile: z.string().optional().describe("mTLS — CA certificate file"),
   natsTlsCertFile: z.string().optional().describe(
@@ -40,22 +66,15 @@ const NatsConnectionArgs = z.object({
   natsTlsKeyFile: z.string().optional().describe("mTLS — client key file"),
 });
 
-// Per-method argument schemas
+// Per-method argument schemas — minimal surface, matches @keeb/ssh's style.
+// Sudo + become fields live on globalArguments (above) so they're declared
+// once per definition and reused across every method call.
 const ExecArgs = z.object({
   command: z.string().describe("Command to execute"),
   timeout: z.number().default(30).describe(
     "Enforced timeout in seconds (agent cancels via AbortSignal)",
   ),
-  sudo: z.boolean().default(false).describe(
-    "Wrap command in sudo on the agent",
-  ),
-  becomeUser: z.string().default("root").describe(
-    "User to become when sudo is true",
-  ),
-  becomePassword: z.string().optional().meta({ sensitive: true }).describe(
-    "Password for sudo -S (piped via stdin)",
-  ),
-  stdin: z.string().optional().describe("Data to pipe to command stdin"),
+  stdin: z.string().optional().describe("Data to pipe to the command's stdin"),
 });
 
 const UploadArgs = z.object({
@@ -71,9 +90,6 @@ const UploadArgs = z.object({
   ),
   owner: z.string().optional().describe("File owner"),
   group: z.string().optional().describe("File group"),
-  sudo: z.boolean().default(false).describe(
-    "Use install(1) atomic write as root on the agent",
-  ),
 });
 
 const WaitForConnectionArgs = z.object({
@@ -97,9 +113,14 @@ const ResultSchema = z.object({
 
 type GlobalArgs = z.infer<typeof NatsConnectionArgs>;
 
+/** Build ConnectOpts from globalArguments, mapping adam-style node* fields
+ *  to the lib's canonical field names. */
 function connectOpts(g: GlobalArgs) {
   return {
-    nodeHost: g.nodeHost,
+    host: g.nodeHost,
+    port: g.nodePort,
+    username: g.nodeUser,
+    privateKeyPath: g.nodeIdentityFile,
     natsUrl: g.natsUrl,
     natsSubjectPrefix: g.natsSubjectPrefix,
     timeoutMs: g.timeoutMs,
@@ -114,9 +135,18 @@ function connectOpts(g: GlobalArgs) {
   };
 }
 
+/** Build BecomeOpts from globalArguments. */
+function becomeOpts(g: GlobalArgs) {
+  return {
+    become: g.become,
+    becomeUser: g.becomeUser,
+    becomePassword: g.becomePassword,
+  };
+}
+
 export const model = {
   type: "@retr0h/nats/host",
-  version: "2026.04.20.1",
+  version: "2026.04.21.1",
   resources: {
     "result": {
       description: "NATS operation result",
@@ -144,18 +174,11 @@ export const model = {
               : args.command
           }`,
         );
-        const result = args.sudo
-          ? await natsExecSudo(conn, args.command, {
-            become: true,
-            becomeUser: args.becomeUser,
-            becomePassword: args.becomePassword,
-            stdinData: args.stdin,
-            timeoutSec: args.timeout,
-          })
-          : await natsExec(conn, args.command, {
-            stdinData: args.stdin,
-            timeoutSec: args.timeout,
-          });
+        const result = await execSudo(conn, args.command, {
+          ...becomeOpts(g),
+          stdinData: args.stdin,
+          timeoutSec: args.timeout,
+        });
         log(
           `done: exitCode=${result.exitCode} stdout=${result.stdout.length}B stderr=${result.stderr.length}B`,
         );
@@ -187,12 +210,12 @@ export const model = {
         log(
           `upload ${args.content.length}B (${args.contentEncoding}) → ${g.nodeHost}:${args.dest}`,
         );
-        await natsWriteFile(conn, args.dest, args.content, {
-          contentEncoding: args.contentEncoding,
+        await writeFileAs(conn, args.dest, args.content, {
+          ...becomeOpts(g),
           mode: args.mode,
           owner: args.owner,
           group: args.group,
-          become: args.sudo,
+          contentEncoding: args.contentEncoding,
         });
         log("upload complete");
 
@@ -212,7 +235,10 @@ export const model = {
       description:
         "Poll the swamp-nats-agent on the target host until it replies or timeout elapses.",
       arguments: WaitForConnectionArgs,
-      execute: async (args: z.infer<typeof WaitForConnectionArgs>, context) => {
+      execute: async (
+        args: z.infer<typeof WaitForConnectionArgs>,
+        context,
+      ) => {
         const g = context.globalArgs as GlobalArgs;
         const logs: string[] = [];
         const log = (m: string) => logs.push(m);
@@ -237,4 +263,6 @@ export const model = {
 };
 
 // Re-export closeAll so swamp can tear down the connection pool at exit.
-export { closeAll };
+// Also re-export `exec` — unused internally (execSudo covers both paths)
+// but handy for external callers that want the no-sudo variant directly.
+export { closeAll, exec };

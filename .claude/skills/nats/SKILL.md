@@ -20,20 +20,35 @@ Single model. All methods share connection arguments via `globalArguments`.
 
 ### Global arguments
 
-| Field               | Type    | Default          | Notes                                               |
-| ------------------- | ------- | ---------------- | --------------------------------------------------- |
-| `nodeHost`          | string  | required         | Target hostname — maps to the NATS subject suffix   |
-| `natsUrl`           | string  | required         | NATS server URL (`nats://host:port`)                |
-| `natsSubjectPrefix` | string  | `swamp.agent`    | Override for multi-tenant namespace isolation       |
-| `timeoutMs`         | number  | `60000`          | Per-request timeout in milliseconds                 |
-| `natsUser`          | string  | optional         | User/pass auth — username                           |
-| `natsPass`          | string  | optional         | User/pass auth — password (sensitive)               |
-| `natsToken`         | string  | optional         | Static token auth (sensitive)                       |
-| `natsCredsPath`     | string  | optional         | Path to NATS creds file (user JWT + nkey, recommended) |
-| `natsNKeySeed`      | string  | optional         | nkey seed directly (sensitive, alternative to creds) |
-| `natsTlsCaFile`     | string  | optional         | mTLS — CA certificate file                          |
-| `natsTlsCertFile`   | string  | optional         | mTLS — client certificate file                      |
-| `natsTlsKeyFile`    | string  | optional         | mTLS — client key file                              |
+Field names intentionally mirror [@adam/cfgmgmt](https://swamp.club/extensions/@adam/cfgmgmt)'s
+`GlobalArgsSchema` (`nodeHost`, `nodeUser`, `become*`) so a cfgmgmt-style
+workflow author can move between SSH and NATS transports without relearning
+the vocabulary. NATS-specific fields are added alongside.
+
+| Field                 | Type    | Default       | Notes                                                       |
+| --------------------- | ------- | ------------- | ----------------------------------------------------------- |
+| **Target**            |         |               |                                                             |
+| `nodeHost`            | string  | required      | Target hostname — maps to the NATS subject suffix           |
+| `nodeUser`            | string  | `root`        | Advisory, SSH-era field kept for cfgmgmt namespace parity   |
+| `nodePort`            | number  | `22`          | SSH-only field, ignored by NATS transport                   |
+| `nodeIdentityFile`    | string  | optional      | SSH-only field, ignored by NATS transport                   |
+| **Sudo / become**     |         |               |                                                             |
+| `become`              | bool    | `false`       | Run commands with sudo on the agent                         |
+| `becomeUser`          | string  | `root`        | User to become when `become: true`                          |
+| `becomePassword`      | string  | optional      | Password for `sudo -S` (sensitive; use vault refs)          |
+| **NATS connection**   |         |               |                                                             |
+| `natsUrl`             | string  | required      | NATS server URL (`nats://host:port`)                        |
+| `natsSubjectPrefix`   | string  | `swamp.agent` | Override for multi-tenant namespace isolation               |
+| `timeoutMs`           | number  | `60000`       | Per-request timeout in milliseconds                         |
+| **NATS auth**         |         |               |                                                             |
+| `natsUser`            | string  | optional      | User/pass auth — username                                   |
+| `natsPass`            | string  | optional      | User/pass auth — password (sensitive)                       |
+| `natsToken`           | string  | optional      | Static token auth (sensitive)                               |
+| `natsCredsPath`       | string  | optional      | Path to NATS creds file (user JWT + nkey, recommended)      |
+| `natsNKeySeed`        | string  | optional      | nkey seed directly (sensitive)                              |
+| `natsTlsCaFile`       | string  | optional      | mTLS — CA certificate file                                  |
+| `natsTlsCertFile`     | string  | optional      | mTLS — client certificate file                              |
+| `natsTlsKeyFile`      | string  | optional      | mTLS — client key file                                      |
 
 Authentication fields are mutually compatible — configure whichever your NATS
 cluster requires. All secret-bearing fields are marked `sensitive: true` and
@@ -55,14 +70,15 @@ non-zero exit — callers inspect `result.exitCode` directly. This matches the
 semantics cfgmgmt-style check/apply frameworks expect from their transport
 library (adam's `_lib/ssh.ts exec`/`execSudo` also don't throw).
 
-| Argument          | Type   | Default | Notes                                                |
-| ----------------- | ------ | ------- | ---------------------------------------------------- |
-| `command`         | string | —       | Command to execute                                   |
-| `timeout`         | number | `30`    | Seconds — enforced by the agent via AbortSignal      |
-| `sudo`            | bool   | `false` | Wrap command in `sudo -n` (or `sudo -S`) on the agent |
-| `becomeUser`      | string | `root`  | User to become when `sudo: true`                     |
-| `becomePassword`  | string | —       | Password for `sudo -S` (sensitive)                   |
-| `stdin`           | string | —       | Piped to the command's stdin                         |
+| Argument  | Type   | Default | Notes                                            |
+| --------- | ------ | ------- | ------------------------------------------------ |
+| `command` | string | —       | Command to execute                               |
+| `timeout` | number | `30`    | Seconds — enforced by the agent via AbortSignal  |
+| `stdin`   | string | —       | Piped to the command's stdin                     |
+
+Sudo is controlled via globalArguments (`become`, `becomeUser`,
+`becomePassword`) so it's declared once per definition rather than repeated
+on every method call.
 
 Result resource fields: `stdout`, `stderr`, `exitCode`, `command`, `host`,
 `error?`, `logs`, `timestamp`.
@@ -196,37 +212,83 @@ configuration guide.
 ## Using from another extension (library mode)
 
 Other extensions can import the transport lib directly without going through
-the model/workflow layer — mirroring how cfgmgmt's `_lib/ssh.ts` exposes SSH
-to 35 cfgmgmt models. Import from
-`extensions/models/lib/nats.ts`:
+the model/workflow layer — mirroring how
+[@adam/cfgmgmt](https://swamp.club/extensions/@adam/cfgmgmt)'s `_lib/ssh.ts`
+exposes SSH to its 35 models. Our lib exports the **same symbol names** as
+adam's lib so a cfgmgmt-style extension can swap transports by changing
+exactly one import line:
+
+```diff
+- import { execSudo, getConnection, shellEscape, writeFileAs } from "./_lib/ssh.ts";
++ import { execSudo, getConnection, shellEscape, writeFileAs } from "@retr0h/nats/lib";
+```
+
+Full symbol parity with adam's `_lib/ssh.ts`:
+
+| Export                                | Adam's SSH lib | Our NATS lib | Notes |
+| ------------------------------------- | :------------: | :----------: | ----- |
+| `getConnection(ConnectOpts)`          | ✓              | ✓            | `host` field used; SSH-specific fields accepted and ignored |
+| `exec(conn, cmd, opts?)`              | ✓              | ✓            | |
+| `execSudo(conn, cmd, opts?)`          | ✓              | ✓            | Agent-side sudo wrapping for safety |
+| `writeFile(conn, path, content)`      | ✓              | ✓            | |
+| `writeFileAs(conn, path, content, opts?)` | ✓          | ✓            | mode/owner/group/become passthrough |
+| `scpFile(conn, local, remote)`        | ✓              | ✓            | Operator reads local, uploads via Object Store |
+| `scpFileAs(conn, local, remote, opts?)` | ✓            | ✓            | Same, with sudo passthrough |
+| `shellEscape(s)`                      | ✓              | ✓            | Identical semantics |
+| `closeAll()`                          | ✓              | ✓            | |
+| `readFile(conn, path, opts?)`         | —              | ✓            | Bonus, agent side uploads to Object Store |
+| `waitForAgent(conn, timeoutSec)`      | —              | ✓            | Bonus, NATS-agent reachability probe |
+
+Example:
 
 ```typescript
 import {
   closeAll,
+  execSudo,
   getConnection,
-  natsExec,
-  natsExecSudo,
-  natsReadFile,
-  natsWriteFile,
   shellEscape,
-  waitForAgent,
-} from "path/to/lib/nats.ts";
+  writeFileAs,
+} from "@retr0h/nats/lib";
 
 const conn = await getConnection({
-  nodeHost: "web-01",
-  natsUrl: "nats://nats.internal:4222",
+  host: "web-01",                           // same field name as adam
+  username: "root",                         // accepted, used as advisory
+  natsUrl: "nats://nats.internal:4222",     // NATS-specific addition
   natsCredsPath: "/etc/nats/ops.creds",
 });
-const result = await natsExecSudo(conn, "systemctl restart nginx", {
-  become: true,
+const result = await execSudo(conn, `systemctl restart nginx`, {
+  become: true,                             // same `BecomeOpts` shape as adam
 });
 if (result.exitCode !== 0) { /* handle */ }
 ```
 
-The lib functions intentionally mirror the shape of adam/cfgmgmt's
-`_lib/ssh.ts` (same argument names, same `ExecResult` return shape, same
-check/apply-friendly semantics — no throws on non-zero exit) so a cfgmgmt-
-style extension can swap transports by changing one import line.
+## Upstreaming to @adam/cfgmgmt
+
+This transport is designed as a drop-in replacement for
+[`@adam/cfgmgmt`](https://swamp.club/extensions/@adam/cfgmgmt)'s internal
+SSH library. The planned upstream change to adam's repo is a **single-file
+refactor** of `_lib/ssh.ts` into a dispatcher that routes to the active
+transport based on a new `transport` field on cfgmgmt's `GlobalArgsSchema`:
+
+```typescript
+// patched @adam/cfgmgmt/_lib/ssh.ts (proposed)
+import * as sshImpl from "./transport_ssh.ts";   // adam's current ssh code, renamed
+import * as natsImpl from "@retr0h/nats/lib";    // this extension
+
+export const getConnection = (opts) =>
+  opts.transport === "nats" ? natsImpl.getConnection(opts) : sshImpl.getConnection(opts);
+export const execSudo = /* same dispatch pattern */;
+// ... etc for the other exports
+```
+
+All 35 cfgmgmt models keep their existing `import { execSudo, ... } from "./_lib/ssh.ts"`
+line untouched. Operators opt into NATS per-definition by setting
+`transport: nats` plus the relevant `nats*` fields in `globalArguments`.
+
+The PR to `adamhjk/swamp-cfgmgmt` is scoped to that dispatcher file, the
+`transport` field addition on `GlobalArgsSchema`, and a docker-compose-based
+integration test that runs one representative model (sysctl) under both
+transports to prove parity.
 
 ## Gotchas
 

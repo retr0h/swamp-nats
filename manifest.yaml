@@ -1,6 +1,6 @@
 manifestVersion: 1
 name: "@retr0h/nats"
-version: "2026.04.20.1"
+version: "2026.04.21.1"
 description: "General-purpose NATS transport for swamp — exec, upload, wait for agent connection. Pairs with swamp-nats-agent (https://github.com/retr0h/swamp-nats-agent)."
 repository: https://github.com/retr0h/swamp-nats
 labels:
