@@ -52,9 +52,66 @@ NATS server; at the host layer you need `swamp-nats-agent` subscribed.
 - [swamp-nats-agent](https://github.com/retr0h/swamp-nats-agent) — the
   companion daemon that runs on every managed host and answers the three
   primitives.
-- An eventual patched `@adam/cfgmgmt` — its `_lib/ssh.ts` shim dispatches to
-  this extension when `globalArgs.transport: nats` is set, giving all 35
-  cfgmgmt models NATS transport for free.
+
+## 🎯 Upstreaming to @adam/cfgmgmt
+
+The primary use case for this transport is as a **drop-in replacement** for
+[@adam/cfgmgmt](https://swamp.club/extensions/@adam/cfgmgmt)'s internal
+`_lib/ssh.ts`. Our library exports the same symbol names (`getConnection`,
+`exec`, `execSudo`, `writeFile`, `writeFileAs`, `scpFile`, `scpFileAs`,
+`shellEscape`, `closeAll`) with the same argument shapes, so adam's 35
+cfgmgmt models can keep their existing import line and gain NATS transport
+via a single-file dispatcher patch in cfgmgmt's repo.
+
+### Planned upstream change
+
+One file changes in `adamhjk/swamp-cfgmgmt` — `_lib/ssh.ts` becomes a
+dispatcher:
+
+```typescript
+// proposed patched _lib/ssh.ts
+import * as ssh from "./transport_ssh.ts";    // adam's current SSH code, renamed
+import * as nats from "@retr0h/nats/lib";     // this extension
+
+export const getConnection = (opts) =>
+  opts.transport === "nats" ? nats.getConnection(opts) : ssh.getConnection(opts);
+// ... same dispatch for execSudo, writeFileAs, scpFileAs, exec, writeFile, etc.
+```
+
+cfgmgmt's `GlobalArgsSchema` gains one new field (`transport: "ssh" | "nats"`,
+default `"ssh"`) plus the NATS-specific connection fields (`natsUrl`,
+`natsCredsPath`, etc.). The 35 domain models — `sysctl.ts`, `user.ts`,
+`cron.ts`, `systemd.ts`, `file.ts`, etc. — stay byte-for-byte identical.
+
+### Operator experience after the upstream lands
+
+Per-definition opt-in:
+
+```yaml
+# SSH-mode definition — works today, no change
+type: "@adam/cfgmgmt/sysctl"
+globalArguments:
+  nodeHost: web-01
+  nodeUser: root
+  nodeIdentityFile: ~/.ssh/ops
+  key: net.ipv4.ip_forward
+  value: "1"
+```
+
+```yaml
+# NATS-mode definition — works after the upstream patch + @retr0h/nats install
+type: "@adam/cfgmgmt/sysctl"
+globalArguments:
+  nodeHost: web-01
+  transport: nats
+  natsUrl: "nats://nats.internal:4222"
+  natsCredsPath: "${{ vault.nats_ops.creds_path }}"
+  key: net.ipv4.ip_forward
+  value: "1"
+```
+
+Mixed-transport workflows (some definitions SSH, others NATS) in the same
+repo are supported since the selector is per-definition.
 
 ## 📥 Install
 
