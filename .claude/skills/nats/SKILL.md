@@ -50,8 +50,10 @@ natsPass: ${{ vault.nats_ops.password }}
 #### `exec`
 
 Run a shell command on the remote host via the `swamp-nats-agent` daemon.
-Returns stdout, stderr, and exit code — does NOT throw on non-zero exit
-(unlike keeb's SSH model). Callers inspect `exitCode` directly.
+Returns stdout, stderr, and exit code. The model method does NOT throw on
+non-zero exit — callers inspect `result.exitCode` directly. This matches the
+semantics cfgmgmt-style check/apply frameworks expect from their transport
+library (adam's `_lib/ssh.ts exec`/`execSudo` also don't throw).
 
 | Argument          | Type   | Default | Notes                                                |
 | ----------------- | ------ | ------- | ---------------------------------------------------- |
@@ -191,6 +193,41 @@ jobs:
 See the extension's [README](../../../README.md) for the full server-side
 configuration guide.
 
+## Using from another extension (library mode)
+
+Other extensions can import the transport lib directly without going through
+the model/workflow layer — mirroring how cfgmgmt's `_lib/ssh.ts` exposes SSH
+to 35 cfgmgmt models. Import from
+`extensions/models/lib/nats.ts`:
+
+```typescript
+import {
+  closeAll,
+  getConnection,
+  natsExec,
+  natsExecSudo,
+  natsReadFile,
+  natsWriteFile,
+  shellEscape,
+  waitForAgent,
+} from "path/to/lib/nats.ts";
+
+const conn = await getConnection({
+  nodeHost: "web-01",
+  natsUrl: "nats://nats.internal:4222",
+  natsCredsPath: "/etc/nats/ops.creds",
+});
+const result = await natsExecSudo(conn, "systemctl restart nginx", {
+  become: true,
+});
+if (result.exitCode !== 0) { /* handle */ }
+```
+
+The lib functions intentionally mirror the shape of adam/cfgmgmt's
+`_lib/ssh.ts` (same argument names, same `ExecResult` return shape, same
+check/apply-friendly semantics — no throws on non-zero exit) so a cfgmgmt-
+style extension can swap transports by changing one import line.
+
 ## Gotchas
 
 - **Agent must be deployed.** Unlike `@keeb/ssh`, this is not agentless —
@@ -199,7 +236,9 @@ configuration guide.
   latency (a put + get round-trip) vs SSH's single `scp` hop, bought for
   protocol simplicity and no 1 MiB ceiling. Large archives and binary
   blobs work without any special handling.
-- **`exec` does NOT throw on non-zero exit.** Inspect `exitCode` — behavior
+- **`exec` does NOT throw on non-zero exit** — whether called as a model
+  method from a workflow or via the transport library from another
+  extension. Always inspect `exitCode`. Inspect `exitCode` — behavior
   differs from `@keeb/ssh/exec` which throws. Matches the semantics cfgmgmt
   and similar check/apply frameworks expect.
 - **Sudo wrapping is agent-side.** The agent runs `sudo -n` (or `sudo -S` with
