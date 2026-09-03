@@ -188,6 +188,11 @@ natsCredsPath: ${{ vault.nats_ops.creds_path }}
 natsNKeySeed: ${{ vault.nats_ops.nkey_seed }}
 ```
 
+## 🧑‍💻 Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for prerequisites, setup, testing, the
+adversarial review and publishing.
+
 ## 📄 License
 
 The [MIT][] License.
