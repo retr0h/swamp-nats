@@ -119,11 +119,7 @@ repo are supported since the selector is per-definition.
 swamp extension pull @retr0h/nats
 ```
 
-Or for local development:
-
-```bash
-swamp extension source add ~/git/swamp.club/swamp-nats
-```
+For local development, see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## 🧰 NATS server assumptions
 
