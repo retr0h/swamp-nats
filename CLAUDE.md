@@ -47,3 +47,11 @@ swamp models.
 Use `swamp --help` to see available commands.
 <!-- END swamp managed section -->
 
+
+# Claude Code
+
+All agent guidance lives in @AGENTS.md: where the rules come from, the commit
+trailer, and what to run before committing. This file exists so Claude Code
+finds it; the content is upstream.
+
+@AGENTS.md
